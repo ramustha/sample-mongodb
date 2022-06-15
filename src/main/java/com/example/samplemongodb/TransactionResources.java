@@ -77,7 +77,7 @@ class TransactionResources {
         sort(Sort.by(Sort.Direction.valueOf(request.getSortOrder()), request.getSortBy()));
 
     AggregationOperation addFields = context -> new Document("$addFields",
-        new Document("groupDate", convertGroup(request.getGroupBy(), request.getGroupType())));
+        new Document("groupDate", groupBy(request.getGroupBy(), request.getGroupType())));
 
     GroupOperation groupOps = group("groupDate").push(Aggregation.ROOT).as("data");
 
@@ -90,8 +90,13 @@ class TransactionResources {
 
     Aggregation aggregation;
     if (request.getGroupSize() != -1) {
-      ProjectionOperation projectOps =
-          project("$data").andExpression("data").slice(request.getGroupSize()).as("data");
+      ProjectionOperation projectOps = project("$data").andExpression("data")
+          .slice(request.getGroupSize()).as("data")
+          .and(context -> new Document("$toLong",
+              new Document("$dateFromString",
+                  new Document("format", "%Y-%m-%d").append("dateString",
+                      dateGroupConcat(request.getGroupType()))))).as("_id");
+
       aggregation = newAggregation(matchOps,
           sortOps,
           addFields,
@@ -112,25 +117,30 @@ class TransactionResources {
     return output.getMappedResults();
   }
 
-  static Object convertGroup(String groupField, String groupFormat) {
+  static Object groupBy(String groupField, String groupFormat) {
     if (groupField.equals("createdDate") || groupField.equals("transactionDate")) {
       return new Document("$dateToString",
-          new Document("format", convertDateGroupType(groupFormat)).append("date",
+          new Document("format", dateGroupFormat(groupFormat)).append("date",
               new Document("$toDate", String.format("$%s", groupField))));
     }
-    if (groupField.equals("actionName") || groupField.equals("status") || groupField.equals(
-        "paymentType")) {
-      return String.format("$%s", groupField);
-    }
-    return convertGroup("transactionDate", groupFormat);
+    return groupBy("transactionDate", groupFormat);
   }
 
-  static String convertDateGroupType(String value) {
+  static String dateGroupFormat(String value) {
     if (value.equals("year")) {
       return "%Y";
     } else if (value.equals("month")) {
       return "%Y-%m";
     }
     return "%Y-%m-%d";
+  }
+
+  static Object dateGroupConcat(String value) {
+    if (value.equals("year")) {
+      return new Document("$concat", List.of("$_id", "-01-01"));
+    } else if (value.equals("month")) {
+      return new Document("$concat", List.of("$_id", "-01"));
+    }
+    return "$_id";
   }
 }
